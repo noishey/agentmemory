@@ -8,6 +8,7 @@ import { deleteAccessLog } from "./access-tracker.js";
 import { recordAudit } from "./audit.js";
 import { getSearchIndex, vectorIndexAddGuarded } from "./search.js";
 import { logger } from "../logger.js";
+import { loadAgentConfig } from "../config.js";
 
 export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::remember", 
@@ -69,6 +70,8 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           }
         }
 
+        const agentConfig = loadAgentConfig();
+
         const memory: Memory = {
           id: generateId("mem"),
           createdAt: now,
@@ -87,6 +90,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
             (id): id is string => typeof id === "string" && id.length > 0,
           ),
           isLatest: true,
+          ...(agentConfig.agentId ? { agentId: agentConfig.agentId } : {}),
         };
 
         if (data.ttlDays && typeof data.ttlDays === "number" && data.ttlDays > 0) {

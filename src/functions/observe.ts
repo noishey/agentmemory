@@ -5,7 +5,7 @@ import { StateKV } from "../state/kv.js";
 import { stripPrivateData } from "./privacy.js";
 import { DedupMap } from "./dedup.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
-import { isAutoCompressEnabled } from "../config.js";
+import { isAutoCompressEnabled, loadAgentConfig } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { getSearchIndex, vectorIndexAddGuarded } from "./search.js";
 import { logger } from "../logger.js";
@@ -85,12 +85,15 @@ export function registerObserveFunction(
         sanitizedRaw = stripPrivateData(String(payload.data));
       }
 
+      const agentConfig = loadAgentConfig();
+
       const raw: RawObservation = {
         id: obsId,
         sessionId: payload.sessionId,
         timestamp: payload.timestamp,
         hookType: payload.hookType,
         raw: sanitizedRaw,
+        ...(agentConfig.agentId ? { agentId: agentConfig.agentId } : {}),
       };
 
       let extractedImage: string | undefined;
@@ -232,6 +235,9 @@ export function registerObserveFunction(
           });
         } else {
           const synthetic = buildSyntheticCompression(raw);
+          if (agentConfig.agentId) {
+            synthetic.agentId = agentConfig.agentId;
+          }
           await kv.set(
             KV.observations(payload.sessionId),
             obsId,

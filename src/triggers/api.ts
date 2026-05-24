@@ -18,6 +18,7 @@ import {
   isContextInjectionEnabled,
   detectEmbeddingProvider,
   detectLlmProviderKind,
+  loadAgentConfig,
 } from "../config.js";
 
 type Response = {
@@ -536,6 +537,8 @@ export function registerApiTriggers(
         };
       }
       const title = typeof body.title === "string" ? body.title.trim() : undefined;
+      const agentConfig = loadAgentConfig();
+
       const session: Session = {
         id: sessionId,
         project,
@@ -543,6 +546,7 @@ export function registerApiTriggers(
         startedAt: new Date().toISOString(),
         status: "active",
         observationCount: 0,
+        ...(agentConfig.agentId ? { agentId: agentConfig.agentId } : {}),
         ...(title ? { summary: title.slice(0, 200) } : {}),
         ...(title ? { firstPrompt: title.slice(0, 200) } : {}),
       };

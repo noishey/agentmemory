@@ -11,6 +11,7 @@ export interface Session {
   firstPrompt?: string;
   summary?: string;
   commitShas?: string[];
+  agentId?: string;
 }
 
 export interface CommitLink {
@@ -39,6 +40,7 @@ export interface RawObservation {
   raw: unknown;
   modality?: "text" | "image" | "mixed";
   imageData?: string;
+  agentId?: string;
 }
 
 export interface CompressedObservation {
@@ -58,7 +60,7 @@ export interface CompressedObservation {
   imageData?: string;
   imageDescription?: string;
   modality?: "text" | "image" | "mixed";
-
+  agentId?: string;
 }
 
 export type ObservationType =
@@ -98,6 +100,7 @@ export interface Memory {
   forgetAfter?: string;
   imageRef?: string;
   imageData?: string;
+  agentId?: string;
 }
 
 export interface SessionSummary {
@@ -161,6 +164,10 @@ export interface AgentMemoryConfig {
   maxObservationsPerSession: number;
   compressionModel: string;
   dataDir: string;
+  agent?: {
+    agentId?: string;
+    agentScope: "shared" | "isolated";
+  };
 }
 
 export interface SearchResult {

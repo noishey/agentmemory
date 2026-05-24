@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -205,4 +205,316 @@ describe("mem::search", () => {
     setVectorIndex(null);
     setEmbeddingProvider(null);
   });
+
+  describe("AGENT_ID isolation", () => {
+    beforeEach(() => {
+      // Clean environment variables before each isolation test
+      delete process.env.AGENT_ID;
+      delete process.env.AGENTMEMORY_AGENT_ID;
+      delete process.env.AGENTMEMORY_AGENT_SCOPE;
+    });
+
+    afterEach(() => {
+      delete process.env.AGENT_ID;
+      delete process.env.AGENTMEMORY_AGENT_ID;
+      delete process.env.AGENTMEMORY_AGENT_SCOPE;
+    });
+
+    it("returns all results under default shared scope", async () => {
+      // Setup observation with agentId A and observation with agentId B
+      const sessionA: Session = {
+        id: "ses_a",
+        project: "demo",
+        cwd: "/tmp/demo",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "completed",
+        observationCount: 1,
+        agentId: "agent-A",
+      };
+      const sessionB: Session = {
+        id: "ses_b",
+        project: "demo",
+        cwd: "/tmp/demo",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "completed",
+        observationCount: 1,
+        agentId: "agent-B",
+      };
+      await kv.set(KV.sessions, sessionA.id, sessionA);
+      await kv.set(KV.sessions, sessionB.id, sessionB);
+
+      const obsA: CompressedObservation = {
+        id: "obs_a_iso",
+        sessionId: "ses_a",
+        timestamp: "2026-01-01T00:00:00Z",
+        type: "decision",
+        title: "Auth key decision",
+        facts: [],
+        narrative: "Auth key details.",
+        concepts: ["auth"],
+        files: [],
+        importance: 8,
+        agentId: "agent-A",
+      };
+      const obsB: CompressedObservation = {
+        id: "obs_b_iso",
+        sessionId: "ses_b",
+        timestamp: "2026-01-01T00:00:00Z",
+        type: "decision",
+        title: "Auth config decision",
+        facts: [],
+        narrative: "Auth config details.",
+        concepts: ["auth"],
+        files: [],
+        importance: 8,
+        agentId: "agent-B",
+      };
+      await kv.set(KV.observations("ses_a"), obsA.id, obsA);
+      await kv.set(KV.observations("ses_b"), obsB.id, obsB);
+
+      getSearchIndex().clear();
+      await rebuildIndex(kv as never);
+
+      // Perform search without setting AGENTMEMORY_AGENT_SCOPE="isolated"
+      const result = (await sdk.trigger("mem::search", {
+        query: "Auth",
+      })) as { results: Array<{ observation: CompressedObservation }> };
+
+      // Should return both since isolation is shared by default
+      const ids = result.results.map((r) => r.observation.id);
+      expect(ids).toContain("obs_a_iso");
+      expect(ids).toContain("obs_b_iso");
+    });
+
+    it("filters out mismatched AGENT_ID results under isolated scope", async () => {
+      // Setup observations with different agent IDs
+      const sessionA: Session = {
+        id: "ses_a",
+        project: "demo",
+        cwd: "/tmp/demo",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "completed",
+        observationCount: 1,
+        agentId: "agent-A",
+      };
+      const sessionB: Session = {
+        id: "ses_b",
+        project: "demo",
+        cwd: "/tmp/demo",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "completed",
+        observationCount: 1,
+        agentId: "agent-B",
+      };
+      await kv.set(KV.sessions, sessionA.id, sessionA);
+      await kv.set(KV.sessions, sessionB.id, sessionB);
+
+      const obsA: CompressedObservation = {
+        id: "obs_a_iso",
+        sessionId: "ses_a",
+        timestamp: "2026-01-01T00:00:00Z",
+        type: "decision",
+        title: "Auth key decision",
+        facts: [],
+        narrative: "Auth key details.",
+        concepts: ["auth"],
+        files: [],
+        importance: 8,
+        agentId: "agent-A",
+      };
+      const obsB: CompressedObservation = {
+        id: "obs_b_iso",
+        sessionId: "ses_b",
+        timestamp: "2026-01-01T00:00:00Z",
+        type: "decision",
+        title: "Auth config decision",
+        facts: [],
+        narrative: "Auth config details.",
+        concepts: ["auth"],
+        files: [],
+        importance: 8,
+        agentId: "agent-B",
+      };
+      await kv.set(KV.observations("ses_a"), obsA.id, obsA);
+      await kv.set(KV.observations("ses_b"), obsB.id, obsB);
+
+      getSearchIndex().clear();
+      await rebuildIndex(kv as never);
+
+      // Now set scope to isolated, matching agent-A
+      process.env.AGENTMEMORY_AGENT_SCOPE = "isolated";
+      process.env.AGENT_ID = "agent-A";
+
+      const result = (await sdk.trigger("mem::search", {
+        query: "Auth",
+      })) as { results: Array<{ observation: CompressedObservation }> };
+
+      // Should only contain agent-A's observation
+      const ids = result.results.map((r) => r.observation.id);
+      expect(ids).toContain("obs_a_iso");
+      expect(ids).not.toContain("obs_b_iso");
+    });
+
+    it("filters out mismatched results under isolated scope using AGENTMEMORY_AGENT_ID alias", async () => {
+      // Setup observations with different agent IDs
+      const sessionA: Session = {
+        id: "ses_a",
+        project: "demo",
+        cwd: "/tmp/demo",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "completed",
+        observationCount: 1,
+        agentId: "agent-A",
+      };
+      const sessionB: Session = {
+        id: "ses_b",
+        project: "demo",
+        cwd: "/tmp/demo",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "completed",
+        observationCount: 1,
+        agentId: "agent-B",
+      };
+      await kv.set(KV.sessions, sessionA.id, sessionA);
+      await kv.set(KV.sessions, sessionB.id, sessionB);
+
+      const obsA: CompressedObservation = {
+        id: "obs_a_iso",
+        sessionId: "ses_a",
+        timestamp: "2026-01-01T00:00:00Z",
+        type: "decision",
+        title: "Auth key decision",
+        facts: [],
+        narrative: "Auth key details.",
+        concepts: ["auth"],
+        files: [],
+        importance: 8,
+        agentId: "agent-A",
+      };
+      const obsB: CompressedObservation = {
+        id: "obs_b_iso",
+        sessionId: "ses_b",
+        timestamp: "2026-01-01T00:00:00Z",
+        type: "decision",
+        title: "Auth config decision",
+        facts: [],
+        narrative: "Auth config details.",
+        concepts: ["auth"],
+        files: [],
+        importance: 8,
+        agentId: "agent-B",
+      };
+      await kv.set(KV.observations("ses_a"), obsA.id, obsA);
+      await kv.set(KV.observations("ses_b"), obsB.id, obsB);
+
+      getSearchIndex().clear();
+      await rebuildIndex(kv as never);
+
+      // Now set scope to isolated, matching agent-A via the alias
+      process.env.AGENTMEMORY_AGENT_SCOPE = "isolated";
+      process.env.AGENTMEMORY_AGENT_ID = "agent-A";
+
+      const result = (await sdk.trigger("mem::search", {
+        query: "Auth",
+      })) as { results: Array<{ observation: CompressedObservation }> };
+
+      // Should only contain agent-A's observation
+      const ids = result.results.map((r) => r.observation.id);
+      expect(ids).toContain("obs_a_iso");
+      expect(ids).not.toContain("obs_b_iso");
+    });
+
+    it("preserves untagged legacy sessions and observations under isolated scope", async () => {
+      const sessionLegacy: Session = {
+        id: "ses_legacy",
+        project: "demo",
+        cwd: "/tmp/demo",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "completed",
+        observationCount: 1,
+      };
+      const sessionA: Session = {
+        id: "ses_a",
+        project: "demo",
+        cwd: "/tmp/demo",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "completed",
+        observationCount: 1,
+        agentId: "agent-A",
+      };
+      const sessionB: Session = {
+        id: "ses_b",
+        project: "demo",
+        cwd: "/tmp/demo",
+        startedAt: "2026-01-01T00:00:00Z",
+        status: "completed",
+        observationCount: 1,
+        agentId: "agent-B",
+      };
+      await kv.set(KV.sessions, sessionLegacy.id, sessionLegacy);
+      await kv.set(KV.sessions, sessionA.id, sessionA);
+      await kv.set(KV.sessions, sessionB.id, sessionB);
+
+      const obsLegacy: CompressedObservation = {
+        id: "obs_legacy",
+        sessionId: "ses_legacy",
+        timestamp: "2026-01-01T00:00:00Z",
+        type: "decision",
+        title: "Auth legacy decision",
+        facts: [],
+        narrative: "Auth legacy details.",
+        concepts: ["auth"],
+        files: [],
+        importance: 8,
+      };
+      const obsA: CompressedObservation = {
+        id: "obs_a_iso",
+        sessionId: "ses_a",
+        timestamp: "2026-01-01T00:00:00Z",
+        type: "decision",
+        title: "Auth key decision",
+        facts: [],
+        narrative: "Auth key details.",
+        concepts: ["auth"],
+        files: [],
+        importance: 8,
+        agentId: "agent-A",
+      };
+      const obsB: CompressedObservation = {
+        id: "obs_b_iso",
+        sessionId: "ses_b",
+        timestamp: "2026-01-01T00:00:00Z",
+        type: "decision",
+        title: "Auth config decision",
+        facts: [],
+        narrative: "Auth config details.",
+        concepts: ["auth"],
+        files: [],
+        importance: 8,
+        agentId: "agent-B",
+      };
+      await kv.set(KV.observations("ses_legacy"), obsLegacy.id, obsLegacy);
+      await kv.set(KV.observations("ses_a"), obsA.id, obsA);
+      await kv.set(KV.observations("ses_b"), obsB.id, obsB);
+
+      getSearchIndex().clear();
+      await rebuildIndex(kv as never);
+
+      // Now set scope to isolated, matching agent-A
+      process.env.AGENTMEMORY_AGENT_SCOPE = "isolated";
+      process.env.AGENT_ID = "agent-A";
+
+      const result = (await sdk.trigger("mem::search", {
+        query: "Auth",
+      })) as { results: Array<{ observation: CompressedObservation }> };
+
+      // Should contain agent-A's observation AND the legacy untagged observation,
+      // but strictly exclude the mismatched agent-B's observation.
+      const ids = result.results.map((r) => r.observation.id);
+      expect(ids).toContain("obs_a_iso");
+      expect(ids).toContain("obs_legacy");
+      expect(ids).not.toContain("obs_b_iso");
+    });
+  });
 });
+

@@ -20,6 +20,13 @@ const DATA_DIR = join(homedir(), ".agentmemory");
 const ENV_FILE = join(DATA_DIR, ".env");
 
 function loadEnvFile(): Record<string, string> {
+  if (process.env.NODE_ENV === "test" || process.env.VITEST === "true") {
+    // Only allow loading if HOME has been sandboxed by env-loader.test.ts
+    const home = process.env.HOME || "";
+    if (!home.includes("agentmemory-env-")) {
+      return {};
+    }
+  }
   if (!existsSync(ENV_FILE)) return {};
   const content = readFileSync(ENV_FILE, "utf-8");
   const vars: Record<string, string> = {};
@@ -81,7 +88,7 @@ function detectProvider(env: Record<string, string>): ProviderConfig {
     if (!hasRealValue(env["GEMINI_API_KEY"]) && hasRealValue(env["GOOGLE_API_KEY"])) {
       process.stderr.write(
         "[agentmemory] GOOGLE_API_KEY detected — treating as GEMINI_API_KEY. " +
-          "Set GEMINI_API_KEY in ~/.agentmemory/.env to silence this warning.\n",
+        "Set GEMINI_API_KEY in ~/.agentmemory/.env to silence this warning.\n",
       );
     }
     return {
@@ -102,14 +109,14 @@ function detectProvider(env: Record<string, string>): ProviderConfig {
   if (!allowAgentSdk) {
     process.stderr.write(
       "[agentmemory] No LLM provider key found " +
-        "(ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, MINIMAX_API_KEY, OPENAI_API_KEY). " +
-        "LLM-backed compression and summarization are DISABLED — using no-op provider. " +
-        "This is the safe default: the agent-sdk fallback used to spawn Claude Agent SDK " +
-        "child sessions which inherit Claude Code's plugin hooks and cause infinite Stop-hook " +
-        "recursion (#149 follow-up). To opt in to the agent-sdk fallback anyway, set both " +
-        "AGENTMEMORY_AUTO_COMPRESS=true AND AGENTMEMORY_ALLOW_AGENT_SDK=true — but be aware " +
-        "it will burn your Claude Pro allocation and may still recurse if you use it from " +
-        "inside Claude Code itself.\n",
+      "(ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, MINIMAX_API_KEY, OPENAI_API_KEY). " +
+      "LLM-backed compression and summarization are DISABLED — using no-op provider. " +
+      "This is the safe default: the agent-sdk fallback used to spawn Claude Agent SDK " +
+      "child sessions which inherit Claude Code's plugin hooks and cause infinite Stop-hook " +
+      "recursion (#149 follow-up). To opt in to the agent-sdk fallback anyway, set both " +
+      "AGENTMEMORY_AUTO_COMPRESS=true AND AGENTMEMORY_ALLOW_AGENT_SDK=true — but be aware " +
+      "it will burn your Claude Pro allocation and may still recurse if you use it from " +
+      "inside Claude Code itself.\n",
     );
     return {
       provider: "noop",
@@ -120,15 +127,29 @@ function detectProvider(env: Record<string, string>): ProviderConfig {
 
   process.stderr.write(
     "[agentmemory] WARNING: agent-sdk fallback enabled via AGENTMEMORY_ALLOW_AGENT_SDK=true. " +
-      "This spawns @anthropic-ai/claude-agent-sdk child sessions that can trigger the Stop-hook " +
-      "recursion loop (#149 follow-up). A SDK-child env marker is set to block re-entry, " +
-      "but prefer setting a real API key in ~/.agentmemory/.env instead.\n",
+    "This spawns @anthropic-ai/claude-agent-sdk child sessions that can trigger the Stop-hook " +
+    "recursion loop (#149 follow-up). A SDK-child env marker is set to block re-entry, " +
+    "but prefer setting a real API key in ~/.agentmemory/.env instead.\n",
   );
   return {
     provider: "agent-sdk",
     model: "claude-sonnet-4-20250514",
     maxTokens,
   };
+}
+
+export interface AgentConfig {
+  agentId?: string;
+  agentScope: "shared" | "isolated";
+}
+export function loadAgentConfig(): AgentConfig {
+  const env = getMergedEnv();
+  const primaryAgentId = env["AGENT_ID"]?.trim();
+  const aliasAgentId = env["AGENTMEMORY_AGENT_ID"]?.trim();
+  const agentId = primaryAgentId || aliasAgentId || undefined;
+  const scopeRaw = (env["AGENTMEMORY_AGENT_SCOPE"] || "shared").trim().toLowerCase();
+  const agentScope = scopeRaw === "isolated" ? "isolated" : "shared";
+  return { agentId, agentScope };
 }
 
 export function loadConfig(): AgentMemoryConfig {
@@ -145,6 +166,7 @@ export function loadConfig(): AgentMemoryConfig {
     maxObservationsPerSession: safeParseInt(env["MAX_OBS_PER_SESSION"], 500),
     compressionModel: provider.model,
     dataDir: DATA_DIR,
+    agent: loadAgentConfig(),
   };
 }
 
@@ -331,10 +353,10 @@ export function loadFallbackConfig(): FallbackConfig {
       if (p === "agent-sdk" && !allowAgentSdk) {
         process.stderr.write(
           "[agentmemory] Ignoring FALLBACK_PROVIDERS entry 'agent-sdk' " +
-            "(AGENTMEMORY_ALLOW_AGENT_SDK is not 'true'). The agent-sdk " +
-            "fallback can spawn Claude Agent SDK child sessions that trigger " +
-            "the Stop-hook recursion loop (#149 follow-up). Opt in explicitly " +
-            "with AGENTMEMORY_ALLOW_AGENT_SDK=true if this is intentional.\n",
+          "(AGENTMEMORY_ALLOW_AGENT_SDK is not 'true'). The agent-sdk " +
+          "fallback can spawn Claude Agent SDK child sessions that trigger " +
+          "the Stop-hook recursion loop (#149 follow-up). Opt in explicitly " +
+          "with AGENTMEMORY_ALLOW_AGENT_SDK=true if this is intentional.\n",
         );
         return false;
       }

@@ -8,6 +8,7 @@ import type { EmbeddingProvider } from '../types.js'
 import { memoryToObservation } from '../state/memory-utils.js'
 import { recordAccessBatch } from './access-tracker.js'
 import { logger } from "../logger.js";
+import { loadAgentConfig } from "../config.js";
 
 let index: SearchIndex | null = null
 let vectorIndex: VectorIndex | null = null
@@ -292,6 +293,8 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       token_budget?: number
     }) => {
       const idx = getSearchIndex()
+      const agentConfig = loadAgentConfig();
+      const isIsolated = agentConfig.agentScope === "isolated" && !!agentConfig.agentId;
 
       // Input validation / normalization.
       if (typeof data?.query !== 'string' || !data.query.trim()) {
@@ -325,9 +328,9 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
         logger.info('Search index rebuilt', { entries: count })
       }
 
-      // When filtering by project/cwd, over-fetch from the index so the
+      // When filtering by project/cwd/agent, over-fetch from the index so the
       // post-filter still has a chance of returning `effectiveLimit` results.
-      const filtering = !!(projectFilter || cwdFilter)
+      const filtering = !!(projectFilter || cwdFilter || isIsolated)
       const fetchLimit = filtering ? Math.max(effectiveLimit * 10, 100) : effectiveLimit
       const results = idx.search(query, fetchLimit)
 
@@ -343,12 +346,17 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       // First pass: filter by session (sequential — benefits from session cache).
       const candidates: typeof results = []
       for (const r of results) {
-        if (candidates.length >= effectiveLimit) break
+        if (candidates.length >= fetchLimit) break
         if (filtering) {
           const s = await loadSession(r.sessionId)
-          if (!s) continue
-          if (projectFilter && s.project !== projectFilter) continue
-          if (cwdFilter && s.cwd !== cwdFilter) continue
+          if (isIsolated && s && s.agentId !== undefined && s.agentId !== agentConfig.agentId) continue
+
+          if (!s) {
+            if (projectFilter || cwdFilter) continue
+          } else {
+            if (projectFilter && s.project !== projectFilter) continue
+            if (cwdFilter && s.cwd !== cwdFilter) continue
+          }
         }
         candidates.push(r)
       }
@@ -362,11 +370,18 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
           const obs = await kv
             .get<CompressedObservation>(KV.observations(r.sessionId), r.obsId)
             .catch(() => null)
-          if (obs) return obs
+          if (obs) {
+            if (isIsolated && obs.agentId !== undefined && obs.agentId !== agentConfig.agentId) return null
+            return obs
+          }
           const mem = await kv
             .get<Memory>(KV.memories, r.obsId)
             .catch(() => null)
-          return mem ? memoryToObservation(mem) : null
+          if (mem) {
+            if (isIsolated && mem.agentId !== undefined && mem.agentId !== agentConfig.agentId) return null
+            return memoryToObservation(mem)
+          }
+          return null
         })
       )
       const enriched: SearchResult[] = []
@@ -381,9 +396,11 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
+      const finalEnriched = enriched.slice(0, effectiveLimit)
+
       void recordAccessBatch(
         kv,
-        enriched.map((r) => r.observation.id),
+        finalEnriched.map((r) => r.observation.id),
       )
 
       const estimateTokens = (value: unknown): number =>
@@ -409,7 +426,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       }
 
       if (format === 'compact') {
-        const compactResults: CompactSearchResult[] = enriched.map((r) => ({
+        const compactResults: CompactSearchResult[] = finalEnriched.map((r) => ({
           obsId: r.observation.id,
           sessionId: r.sessionId,
           title: r.observation.title,
@@ -428,7 +445,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       }
 
       if (format === 'narrative') {
-        const narrativeResults = enriched.map((r) => ({
+        const narrativeResults = finalEnriched.map((r) => ({
           obsId: r.observation.id,
           sessionId: r.sessionId,
           title: r.observation.title,
@@ -450,7 +467,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
         }
       }
 
-      const packed = applyTokenBudget(enriched)
+      const packed = applyTokenBudget(finalEnriched)
 
       // Avoid logging raw cwd/project (host paths). Log only that filters were active.
       logger.info('Search completed', {
