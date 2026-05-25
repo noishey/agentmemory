@@ -10,8 +10,14 @@ import { getSearchIndex, vectorIndexAddGuarded } from "./search.js";
 import { logger } from "../logger.js";
 import { loadAgentConfig } from "../config.js";
 
+/**
+ * Registers the 'mem::remember' pipeline action for consolidating observations into persistent memory.
+ * Evaluates semantic boundaries to prevent cross-agent state mutations when operating under isolated scopes.
+ * * @param {ISdk} sdk - The active framework core system interface.
+ * @param {StateKV} kv - The persistent key-value abstraction module.
+ */
 export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
-  sdk.registerFunction("mem::remember", 
+  sdk.registerFunction("mem::remember",
     async (data: {
       content: string;
       type?: string;

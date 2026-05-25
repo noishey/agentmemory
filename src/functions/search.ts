@@ -280,7 +280,13 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
   await flush()
   return count
 }
-
+/**
+ * Registers the 'mem::search' retrieval hook.
+ * Executes a dual-pass lookup matrix that conditionally isolates observations, summaries,
+ * and permanent memories based on the executing agent's identifier and isolation scope.
+ * * @param {ISdk} sdk - The active framework core system interface.
+ * @param {StateKV} kv - The persistent key-value abstraction module.
+ */
 export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction(
     'mem::search',

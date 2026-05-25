@@ -138,10 +138,21 @@ function detectProvider(env: Record<string, string>): ProviderConfig {
   };
 }
 
+/**
+ * Configuration schema for managing multi-agent execution contexts.
+ * Defines identity tracking and memory visibility bounds.
+ */
 export interface AgentConfig {
+  /** The unique identifier for the current executing agent, or undefined if global. */
   agentId?: string;
+  /** The memory access boundary rule: 'shared' for global team space, 'isolated' for agent-level separation. */
   agentScope: "shared" | "isolated";
 }
+/**
+ * Loads and normalizes agent configuration variables from the active environment.
+ * Handles primary environment values, fallback aliases, and trims whitespace.
+ * * @returns {AgentConfig} The parsed and structural agent isolation settings.
+ */
 export function loadAgentConfig(): AgentConfig {
   const env = getMergedEnv();
   const primaryAgentId = env["AGENT_ID"]?.trim();

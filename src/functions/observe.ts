@@ -32,14 +32,21 @@ export function extractImage(d: unknown): string | undefined {
   }
   return undefined;
 }
-
+/**
+ * Registers the 'mem::observe' hook handler within the SDK context.
+ * Binds incoming session streams to specific agent identifiers to maintain operational tracking.
+ * * @param {ISdk} sdk - The active framework core system interface.
+ * @param {StateKV} kv - The persistent key-value abstraction module.
+ * @param {DedupMap} [dedupMap] - Optional reference tracking map to block observation echo loops.
+ * @param {number} [maxObservationsPerSession] - Context threshold constraint limits.
+ */
 export function registerObserveFunction(
   sdk: ISdk,
   kv: StateKV,
   dedupMap?: DedupMap,
   maxObservationsPerSession?: number,
 ): void {
-  sdk.registerFunction("mem::observe", 
+  sdk.registerFunction("mem::observe",
     async (payload: HookPayload) => {
 
       if (
@@ -174,10 +181,10 @@ export function registerObserveFunction(
         await sdk.trigger({
           function_id: "stream::set",
           payload: {
-          stream_name: STREAM.name,
-          group_id: STREAM.group(payload.sessionId),
-          item_id: obsId,
-          data: { type: "raw", observation: raw },
+            stream_name: STREAM.name,
+            group_id: STREAM.group(payload.sessionId),
+            item_id: obsId,
+            data: { type: "raw", observation: raw },
           },
         });
 
